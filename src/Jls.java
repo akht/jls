@@ -17,9 +17,9 @@ import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 class Info {
     String type;
     String permissions;
-    String fileSize;
-    String user;
-    String group;
+    String size = "";
+    String user = "";
+    String group = "";
     String lastModified;
     String name;
 
@@ -27,29 +27,16 @@ class Info {
     static int maxGroupNameLength = 0;
     static int maxFileSizeLength = 0;
 
-    public Info(String type,
-                String permissions,
-                String fileSize,
-                String user,
-                String group,
-                String lastModified,
-                String name) {
-        this.type = type;
-        this.permissions = permissions;
-        this.fileSize = fileSize;
-        this.user = user;
-        this.group = group;
-        this.lastModified = lastModified;
-        this.name = name;
+    public void update() {
         maxUserNameLength = Math.max(maxUserNameLength, user.length());
         maxGroupNameLength = Math.max(maxGroupNameLength, group.length());
-        maxFileSizeLength = Math.max(maxFileSizeLength, fileSize.length());
+        maxFileSizeLength = Math.max(maxFileSizeLength, size.length());
     }
 }
 
 @FunctionalInterface
-interface GetFunction {
-    String apply(Path path);
+interface Setter {
+    void accept(Path p, Info i);
 }
 
 public class Jls {
@@ -60,7 +47,6 @@ public class Jls {
     static void execute(String[] args) throws IOException {
         Path path = Paths.get(".").toRealPath(NOFOLLOW_LINKS);
         List<Info> result = list(path).sorted(order).map(Jls::getInfo).collect(Collectors.toList());
-
         result.stream().map(Jls::display).forEach(System.out::println);
     }
 
@@ -71,38 +57,30 @@ public class Jls {
                 info.type + info.permissions,
                 padding(info.user, info.maxUserNameLength),
                 padding(info.group, info.maxGroupNameLength),
-                padding(info.fileSize, info.maxFileSizeLength),
+                padding(info.size, info.maxFileSizeLength),
                 info.lastModified,
                 info.name
         ).collect(Collectors.joining(" "));
     }
 
     static Info getInfo(Path path) {
-        String type = Jls.type.apply(path);
-        String permissions = Jls.permissions.apply(path);
-        String size = Jls.size.apply(path);
-        String user = Jls.user.apply(path);
-        String group = Jls.group.apply(path);
-        String lastModified = Jls.lastModifiedTime.apply(path);
-        String name = Jls.name.apply(path);
+        Info info = new Info();
+        Stream.of(type, permissions, size, user, group, lastModifiedTime, name).forEach(f -> f.accept(path, info));
 
-        Info info = new Info(type, permissions, size, user, group, lastModified, name);
         return info;
     }
 
-    static GetFunction type = path -> {
+    static Setter type = (path, info) -> {
         if (Files.isDirectory(path)) {
-            return "d";
+            info.type = "d";
+        } else if (Files.isSymbolicLink(path)) {
+            info.type = "l";
+        } else {
+            info.type = "-";
         }
-
-        if (Files.isSymbolicLink(path)) {
-            return "l";
-        }
-
-        return "-";
     };
 
-    static GetFunction size = path -> {
+    static Setter size = (path, info) -> {
         String size = "-";
 
         try {
@@ -111,12 +89,13 @@ public class Jls {
             e.printStackTrace();
         }
 
-        return size;
+        info.size = size;
+        info.update();
     };
 
-    static GetFunction permissions = path -> Permission.getPermissions(path);
+    static Setter permissions = (path, info) -> info.permissions = Permission.getPermissions(path);
 
-    static GetFunction user = path -> {
+    static Setter user = (path, info) -> {
         String user = "";
 
         try {
@@ -126,10 +105,11 @@ public class Jls {
             e.printStackTrace();
         }
 
-        return user;
+        info.user = user;
+        info.update();
     };
 
-    static GetFunction group = path -> {
+    static Setter group = (path, info) -> {
         String group = "";
 
         try {
@@ -139,10 +119,11 @@ public class Jls {
             e.printStackTrace();
         }
 
-        return group;
+        info.group = group;
+        info.update();
     };
 
-    static GetFunction lastModifiedTime = path -> {
+    static Setter lastModifiedTime = (path, info) -> {
         long lastModifiedTime = 0;
         try {
             lastModifiedTime = Files.getLastModifiedTime(path).toMillis();
@@ -156,10 +137,15 @@ public class Jls {
         String yearOrTime = yearOrTime(zonedDateTime);
         String lastModified = month + " " + padding(day, 2) + " " + padding(yearOrTime, 5);
 
-        return lastModified;
+        info.lastModified = lastModified;
+        info.update();
     };
 
-    static GetFunction name = path -> path.getFileName().toString();
+    static Setter name = (path, info) -> {
+        info.user = path.getFileName().toString();
+        info.update();
+    };
+
 
     enum Permission {
         OWNER_READ(0, PosixFilePermission.OWNER_READ, Type.READ),
